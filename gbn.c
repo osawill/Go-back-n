@@ -1,5 +1,11 @@
 #include "gbn.h"
 
+volatile sig_atomic_t to_flag = false;
+
+void timeout_handler( int sig ) {
+    to_flag = true;
+}
+
 uint16_t checksum(uint16_t *buf, int nwords)
 {
 	uint32_t sum;
@@ -12,7 +18,7 @@ uint16_t checksum(uint16_t *buf, int nwords)
 }
 
 ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags){
-	
+
 	/* TODO: Your code here. */
 
 	/* Hint: Check the data length field 'len'.
@@ -57,16 +63,18 @@ int gbn_bind(int sockfd, const struct sockaddr *server, socklen_t socklen){
 	/* TODO: Your code here. */
 
 	return(-1);
-}	
+}
 
 int gbn_socket(int domain, int type, int protocol){
-		
+
 	/*----- Randomizing the seed. This is used by the rand() function -----*/
 	srand((unsigned)time(0));
-	
-	/* TODO: Your code here. */
 
-	return(-1);
+	//Set timeout handler
+	signal(SIGALRM, timeout_handler);
+
+	int sock = socket(domain, type, protocol);
+	return sock;
 }
 
 int gbn_accept(int sockfd, struct sockaddr *client, socklen_t *socklen){
@@ -81,13 +89,13 @@ ssize_t maybe_sendto(int  s, const void *buf, size_t len, int flags, \
 
 	char *buffer = malloc(len);
 	memcpy(buffer, buf, len);
-	
-	
+
+
 	/*----- Packet not lost -----*/
 	if (rand() > LOSS_PROB*RAND_MAX){
 		/*----- Packet corrupted -----*/
 		if (rand() < CORR_PROB*RAND_MAX){
-			
+
 			/*----- Selecting a random byte inside the packet -----*/
 			int index = (int)((len-1)*rand()/(RAND_MAX + 1.0));
 
