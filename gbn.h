@@ -39,14 +39,16 @@ extern int errno;
 typedef struct {
 	uint8_t  type;            /* packet type (e.g. SYN, DATA, ACK, FIN)     */
 	uint8_t  seqnum;          /* sequence number of the packet              */
-    uint16_t checksum;        /* header and payload checksum                */
-    uint8_t data[DATALEN];    /* pointer to the payload                     */
+  uint16_t checksum;        /* header and payload checksum                */
+  uint8_t data[DATALEN];    /* pointer to the payload                     */
 } __attribute__((packed)) gbnhdr;
 
+/*--- StateMachine ---*/
 typedef struct state_t{
-
-	/* TODO: Your state information could be encoded here. */
-
+	int mode;
+	int isFin;
+	uint8_t seqnum;
+	//uint8_t mode;
 } state_t;
 
 enum {
@@ -56,6 +58,11 @@ enum {
 	ESTABLISHED,
 	FIN_SENT,
 	FIN_RCVD
+};
+
+enum {
+	SLOW=1,
+	FAST=2
 };
 
 extern state_t s;
