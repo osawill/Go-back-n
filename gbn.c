@@ -2,45 +2,66 @@
 /*--- Timeout ---*/
 volatile sig_atomic_t to_flag = false;
 
-void timeout_handler( int sig ) { //Sets timeout flag to alert program
+/*Sets timeout flag to alert program*/
+void timeout_handler( int sig ) {
     to_flag = true;
-		printf("~~ Timeout ~~\n", );
+		printf("~~ Timeout ~~\n");
 }
-
-void reset_timeout() { //Reset timeout
+/*Reset timeout*/
+void reset_timeout() {
 	to_flag = false;
 }
 
-state_t machine = {SLOW, CLOSED};
+state_t machine = {SLOW, CLOSED, 2};
 
 /*--- Global ---*/
 struct sockaddr * hostAddr;
 socklen_t hostLen;
 
-/*--- Header ---*/
-gbnhdr make_head(int type, uint8_t sequence_num)
+/*--- Packet Tools ---*/
+gbnhdr make_header(int type, uint8_t sequence_num)
 {
 	gbnhdr header;
 	header.type = type;
 	header.seqnum = sequence_num;
-	header.checksum = 0; // initial checksum
+	header.checksum = 0; /* initial checksum*/
 
 	return header;
 }
 
-gbnhdr make_head_wdata(int type, uint8_t sequence_num, char *buffer, int data_length)
+gbnhdr* make_packet(int type, uint8_t sequence_num, char *buffer, int data_length)
 {
-	gbnhdr header;
-	header.type = type;
-	header.seqnum = sequence_num;
-	header.checksum = 0;
-	memcpy(header.data, buffer, data_length);
-	header.lenData = data_length;
+	gbnhdr * packet = malloc(sizeof(gbnhdr));
+	packet->type = type;
+	packet->seqnum = sequence_num;
+	memcpy(packet->data, buffer, data_length);
 
-	return header;
+	packet->checksum = checksum((uint16_t *) buffer, data_length);
+
+	return packet;
 }
 
-///////////////////////
+int check_packet(gbnhdr * packet, int type, int len){
+	/* Check timeout*/
+	if (to_flag == true || len ==-1) {
+		reset_timeout();
+		return -1;
+	}
+	/* Check type */
+	else if (packet->type != type) {
+		printf("Wrong packet type received, %d\n", packet->type);
+		return -1;
+	}
+	/* Check seqnum*/
+	else if (packet->seqnum <= machine.seqnum){
+		printf("Wrong seqnum, rec: %d, sent: %d\n",packet->seqnum, machine.seqnum );
+		return -1;
+	}
+
+	return 0;
+}
+
+/*///////*/
 uint16_t checksum(uint16_t *buf, int nwords)
 {
 	uint32_t sum;
@@ -62,7 +83,184 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags){
 	 *       about getting more than N * DATALEN.
 	 */
 
-	return(-1);
+	int cur_mode = machine.mode;
+	int cur_seq = rand();
+
+	machine.seqnum = cur_seq;
+
+	int remaining = len;
+	int cur_size = 0;
+	int track = 0;
+	int attempts;
+
+
+	char * tempBuf = (char *) malloc(DATALEN * sizeof(char));
+	/*Keep sending till end of file*/
+	while (track < len) {
+
+		/* Clear the packet buffer*/
+		memset(tempBuf, '\0', DATALEN);
+
+		if (remaining >= DATALEN) {
+			cur_size = DATALEN;
+		}
+		else {
+			cur_size = remaining;
+		}
+
+		/* SLOW*/
+    attempts = 0;
+		if (cur_mode == SLOW) {
+      gbnhdr * nextPack;
+      gbnhdr * rec_buf;
+
+			memcpy(tempBuf, buf + track, cur_size);
+
+			while(machine.state != ACK_RCVD && attempts < 5) {
+				nextPack = make_packet(DATA, cur_seq, tempBuf, cur_size);
+
+
+				int rtn = sendto(sockfd, nextPack, sizeof(*nextPack), 0, hostAddr, hostLen);
+
+				if (rtn == -1) {
+					printf("Failed to send packet, attempt: %d\n", ++attempts);
+					continue;
+				}
+
+				machine.state = DATA_SENT;
+				alarm(TIMEOUT);
+
+				rec_buf = malloc(sizeof(gbnhdr));
+				int rec_size = recvfrom(sockfd, rec_buf, sizeof(gbnhdr), 0, hostAddr, &hostLen);
+
+
+        if(check_packet(rec_buf, DATAACK, rec_size) == 0){
+          machine.state = ACK_RCVD;
+					cur_mode = FAST;
+          track += cur_size;
+          remaining = remaining - cur_size;
+          cur_seq++;
+          machine.seqnum = cur_seq;
+        } else {
+          attempts++;
+        }
+
+			}
+
+			/* Close out after 5 attempts*/
+			if (machine.state == DATA_SENT) {
+				return -1;
+			}
+
+      free(nextPack);
+      free(rec_buf);
+			machine.state = ESTABLISHED;
+		} else { /* FAST*/
+
+			memcpy(tempBuf, buf + track, cur_size);
+			machine.state = ESTABLISHED;
+
+			int firstTrack = track;
+			int firstLen  = cur_size;
+			int firstSeqnum = cur_seq;
+
+			/* send first packet*/
+      gbnhdr * firstPack = make_packet(DATA, cur_seq, tempBuf, cur_size);
+
+			int firstRtn = sendto(sockfd, firstPack,
+                sizeof(*firstPack), 0, hostAddr, hostLen);
+
+			machine.state = DATA_SENT;
+
+
+			/* Clear the buffer*/
+			memset(tempBuf, '\0', DATALEN);
+
+			/* Send second only if theres still remaining buffer*/
+      int secondTrack;
+      int secondLen;
+      int secondSeqnum;
+			if (track + cur_size < len) {
+				cur_seq++;
+        machine.seqnum = cur_seq;
+        track += cur_size;
+
+        secondTrack = track;
+        secondSeqnum = cur_seq;
+
+        /* Check size*/
+        if (remaining >= DATALEN*2) {
+  				secondLen = DATALEN;
+  			}
+  			else {
+  				secondLen = remaining - DATALEN;
+  			}
+
+        memcpy(tempBuf, buf + track, cur_size);
+        gbnhdr * secondPack = make_packet(DATA, cur_seq, tempBuf, cur_size);
+
+        int secondRtn = sendto(sockfd, secondPack,
+                                sizeof(*secondPack), 0, hostAddr, hostLen);
+
+			}
+      else {
+        secondSeqnum = cur_seq;
+        secondLen = firstLen;
+      }
+
+      cur_seq = firstSeqnum;
+
+      while(attempts < 5 && machine.state != ACK_RCVD){
+        alarm(TIMEOUT);
+        gbnhdr * rec_buf = malloc(sizeof(gbnhdr));
+        int rec_size = recvfrom(sockfd, rec_buf, sizeof * rec_buf, 0, hostAddr, &hostLen);
+
+        if(check_packet(rec_buf, DATAACK, rec_size) ==0){
+          if(rec_buf->seqnum == secondSeqnum) {
+            printf("Ack second packet, seqnum: %d\n", rec_buf->seqnum);
+            machine.state = ACK_RCVD;
+            track += secondLen;
+            remaining -= (secondLen);
+            cur_seq++;
+            machine.seqnum = cur_seq;
+          }
+          else if(rec_buf->seqnum == firstSeqnum) {
+            printf("Ack first packet, seqnum: %d\n", rec_buf->seqnum);
+            remaining -= firstLen;
+            cur_seq = secondSeqnum;
+          }
+          else {
+            attempts++;
+            continue;
+          }
+        } else {
+          if (rec_buf->seqnum == firstSeqnum) {
+            cur_mode = SLOW;
+            track = firstTrack;
+            cur_seq = firstSeqnum;
+            break;
+          }
+          else if (rec_buf->seqnum == secondSeqnum && cur_seq == secondSeqnum){
+            cur_mode = SLOW;
+            track = secondTrack;
+            break;
+          }
+          else {
+            attempts++;
+          }
+        }
+      }
+      /* Start over again with first packer */
+      if (attempts == 5) {
+        cur_mode = SLOW;
+        track = firstTrack;
+        cur_seq = firstSeqnum;
+      }
+		}
+	}
+	machine.isFin = 1;
+
+	return remaining;
 }
 
 ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags){
@@ -85,7 +283,7 @@ int gbn_connect(int sockfd, const struct sockaddr *server, socklen_t socklen){
 	hostAddr = server;
 	hostLen = socklen;
 
-	// If connection is broken
+	/* If connection is broken*/
 	if (sockfd < 0)
 		return -1;
 
@@ -93,45 +291,44 @@ int gbn_connect(int sockfd, const struct sockaddr *server, socklen_t socklen){
 	gbnhdr syn_header = make_header(SYN, 0);
 	machine.state = SYN_SENT;
 	machine.isFin = 0;
+	printf("SYN sent\n");
 
-	// Attempt to send the SYN packet up to 5 times
-	while (machine.state == SYN_SENT && attempt < 5) {
+	/* Attempt to send the SYN packet up to 5 times*/
+	while (attempt < 5) {
 
-		int rtn = sendto(sockfd, &syn_header, sizeof syn_header, 0, server, socklen); //hardcoded 4 since that's always the length of the packet header
+		int rtn = sendto(sockfd, &syn_header, sizeof syn_header, 0, server, socklen);
 
-		alarm(TIMEOUT); // Signal at timeout
-
-		if (rtn == -1) { // Send error, try again
-			attempts++;
+		if (rtn == -1) { /* Send error, try again*/
+			attempt++;
 			continue;
 		}
 
-		//Receive syn ack
-		char buf[1030];
-		int rec_size = recvfrom(sockfd, buf, sizeof buf, 0, sender_global, sender_socklen_global);
+		alarm(TIMEOUT); /* Signal at timeout*/
 
-		// Timeout or nothing received
-		if (to_flag || rec_size == -19) {
-			attempts++;
+		/*Receive ack*/
+		/*char buf[1030];*/
+		gbnhdr * rec_buf = malloc(sizeof(gbnhdr));
+		int rec_size = recvfrom(sockfd, rec_buf, sizeof(gbnhdr), 0, hostAddr, &hostLen);
+
+		/* Timeout or nothing received*/
+		if (to_flag==true || rec_size == -19) {
+			attempt++;
 			reset_timeout();
 		}
-		else { // Received a packet
-			if (buffer[0] == SYNACK) { // Check to see if we got the right response
+		else { /* Received a packet*/
+			if (rec_buf->type == SYNACK) { /* Check to see if we got the right response*/
 				machine.state = ESTABLISHED;
+				printf("Connection established\n");
 				return 0;
 			}
 
-			attempts++;
+			attempt++;
 		}
 	}
 
-	if (attempts >= 5) {
-		machine.state = CLOSED;
-		return -1;
-	}
+	machine.state = CLOSED;
+	return -1;
 
-	// Machine entered a wrong state
-	return -2;
 }
 
 int gbn_listen(int sockfd, int backlog){
@@ -153,7 +350,7 @@ int gbn_socket(int domain, int type, int protocol){
 	/*----- Randomizing the seed. This is used by the rand() function -----*/
 	srand((unsigned)time(0));
 
-	//Set timeout handler
+	/*Set timeout handler*/
 	signal(SIGALRM, timeout_handler);
 
 	int sock = socket(domain, type, protocol);

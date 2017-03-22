@@ -9,6 +9,7 @@
 #include<fcntl.h>
 #include<stdio.h>
 #include<stdlib.h>
+#include<stdint.h>
 #include<string.h>
 #include<netinet/in.h>
 #include<errno.h>
@@ -37,18 +38,19 @@ extern int errno;
 
 /*----- Go-Back-n packet format -----*/
 typedef struct {
-	uint8_t  type;            /* packet type (e.g. SYN, DATA, ACK, FIN)     */
-	uint8_t  seqnum;          /* sequence number of the packet              */
-  uint16_t checksum;        /* header and payload checksum                */
+	uint8_t  type;            /* packet type (e.g. SYN, DATA, ACK, FIN)     1byte*/
+	uint8_t  seqnum;          /* sequence number of the packet              1byte*/
+  uint16_t checksum;        /* header and payload checksum                2bytes*/
   uint8_t data[DATALEN];    /* pointer to the payload                     */
 } __attribute__((packed)) gbnhdr;
 
 /*--- StateMachine ---*/
 typedef struct state_t{
 	int mode;
+	int state;
+	int winSize;
 	int isFin;
 	uint8_t seqnum;
-	//uint8_t mode;
 } state_t;
 
 enum {
@@ -56,6 +58,8 @@ enum {
 	SYN_SENT,
 	SYN_RCVD,
 	ESTABLISHED,
+	DATA_SENT,
+	ACK_RCVD,
 	FIN_SENT,
 	FIN_RCVD
 };
@@ -82,5 +86,7 @@ ssize_t  maybe_sendto(int  s, const void *buf, size_t len, int flags, \
 
 uint16_t checksum(uint16_t *buf, int nwords);
 
+typedef enum { false, true } bool;
+#define h_addr h_addr_list[0] /* for backward compatibility */
 
 #endif
