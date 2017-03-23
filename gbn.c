@@ -15,8 +15,8 @@ void reset_timeout() {
 state_t machine = {SLOW, CLOSED, 2};
 
 /*--- Global ---*/
-struct sockaddr * hostAddr;
-socklen_t hostLen;
+struct sockaddr * hostAddr, * clientAddr;
+socklen_t hostLen, clientLen;
 
 /*--- Packet Tools ---*/
 gbnhdr make_header(int type, uint8_t sequence_num)
@@ -61,7 +61,16 @@ int check_packet(gbnhdr * packet, int type, int len){
 	return 0;
 }
 
-/*///////*/
+int check_header(char *buffer, int length){
+	if (length != 4){
+		return -1;
+	}
+	else if (buffer[0] == SYN){
+		return 0;
+	}
+}
+
+/*/*/
 uint16_t checksum(uint16_t *buf, int nwords)
 {
 	uint32_t sum;
@@ -120,7 +129,7 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags){
 				nextPack = make_packet(DATA, cur_seq, tempBuf, cur_size);
 
 
-				int rtn = sendto(sockfd, nextPack, sizeof(*nextPack), 0, hostAddr, hostLen);
+				int rtn = sendto(sockfd, nextPack, sizeof(*nextPack), 0, clientAddr, clientLen);
 
 				if (rtn == -1) {
 					printf("Failed to send packet, attempt: %d\n", ++attempts);
@@ -265,23 +274,67 @@ ssize_t gbn_send(int sockfd, const void *buf, size_t len, int flags){
 
 ssize_t gbn_recv(int sockfd, void *buf, size_t len, int flags){
 
-	/* TODO: Your code here. */
+	gbnhdr * data_buffer = malloc(sizeof(gbnhdr));
+	int rtn = recvfrom(sockfd, data_buffer, sizeof(gbnhdr), 0, clientAddr, &clientLen);
 
-	return(-1);
+	int lenData = sizeof(*data_buffer->data);
+	/* Check packet type */
+	if (data_buffer->type == DATA) {
+
+
+
+		char cp_buf[lenData];
+		memcpy(cp_buf, data_buffer->data, lenData);
+		int Sum = checksum(buf, lenData);
+
+		gbnhdr ack_header = make_header(DATAACK, data_buffer->seqnum);
+		int sendack = sendto(sockfd, &ack_header, sizeof(gbnhdr), 0, hostAddr, hostLen);
+		if (sendack == -1){
+			return -1;
+		}
+
+		memcpy(buf, data_buffer->data, lenData);
+		return 0;
+	}
+	else {
+		gbnhdr finack_header = make_header(FINACK, 0);
+
+		return sendto(sockfd, &finack_header, sizeof(gbnhdr), 0, hostAddr, hostLen);
+	}
 }
 
 int gbn_close(int sockfd){
 
-	/* TODO: Your code here. */
+	if (sockfd < 0) {
+		return(-1);
+	}
 
-	return(-1);
+	else {
+		if (machine.isFin == 1) {
+			gbnhdr finHeader = make_header(FIN, 0);
+			if (sendto(sockfd, &finHeader, 4, 0, hostAddr, hostLen) == -1)
+			{
+				return-1;
+			}
+		}
+
+		else {
+			gbnhdr finackHeader = make_header(FINACK, 0);
+			int sendfinack = sendto(sockfd, &finackHeader, 4, 0, hostAddr, hostLen);
+			if (sendfinack == -1)
+				return -1;
+			close(sockfd);
+		}
+	}
+
+	return 0;
 }
 
 int gbn_connect(int sockfd, const struct sockaddr *server, socklen_t socklen){
 
 	/* TODO: Your code here. */
-	hostAddr = server;
-	hostLen = socklen;
+	clientAddr = server;
+	clientLen = socklen;
 
 	/* If connection is broken*/
 	if (sockfd < 0)
@@ -332,17 +385,29 @@ int gbn_connect(int sockfd, const struct sockaddr *server, socklen_t socklen){
 }
 
 int gbn_listen(int sockfd, int backlog){
-
-	/* TODO: Your code here. */
-
-	return(-1);
+	printf("Listening...\n");
+	char buffer[1028];
+	int ackPack = recvfrom(sockfd, buffer, sizeof(buffer), 0, hostAddr, &hostLen);
+	printf("Found packet\n");
+	return check_header(buffer, ackPack);
 }
 
 int gbn_bind(int sockfd, const struct sockaddr *server, socklen_t socklen){
 
-	/* TODO: Your code here. */
+	hostAddr = server;
+	hostLen = socklen;
 
-	return(-1);
+	if (sockfd < 0) {
+		return -1;
+	}
+	else {
+		if (bind(sockfd, server, socklen) != 0){
+			return -1;
+		}
+
+	}
+	printf("Bind complete\n");
+	return 0;
 }
 
 int gbn_socket(int domain, int type, int protocol){
@@ -357,11 +422,17 @@ int gbn_socket(int domain, int type, int protocol){
 	return sock;
 }
 
-int gbn_accept(int sockfd, struct sockaddr *client, socklen_t *socklen){
+int gbn_accept(int sockfd, struct sockaddr *host, socklen_t *socklen){
 
-	/* TODO: Your code here. */
-
-	return(-1);
+	if (sockfd < 0) {
+		return(-1);
+	}
+	else {
+		gbnhdr synack_header = make_header(SYNACK, 0);
+		int sendsynack = sendto(sockfd, &synack_header, sizeof(synack_header), 0, hostAddr, hostLen);
+		if (sendsynack == -1) return -1;
+	}
+	return sockfd;
 }
 
 ssize_t maybe_sendto(int  s, const void *buf, size_t len, int flags, \
