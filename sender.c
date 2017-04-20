@@ -16,7 +16,7 @@ int main(int argc, char *argv[]){
 		fprintf(stderr, "usage: sender <hostname> <port> <filename>\n");
 		exit(-1);
 	}
-	
+
 	/*----- Opening the input file -----*/
 	if ((inputFile = fopen(argv[3], "rb")) == NULL){
 		perror("fopen");
@@ -28,7 +28,7 @@ int main(int argc, char *argv[]){
 		perror("gethostbyname");
 		exit(-1);
 	}
-	
+
 	/*----- Opening the socket -----*/
 	if ((sockfd = gbn_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1){
 		perror("gbn_socket");
@@ -40,7 +40,7 @@ int main(int argc, char *argv[]){
 	server.sin_family = AF_INET;
 	server.sin_addr   = *(struct in_addr *)he->h_addr;
 	server.sin_port   = htons(atoi(argv[2]));
-	
+
 	/*----- Connecting to the server -----*/
 	if (gbn_connect(sockfd, (struct sockaddr *)&server, socklen) == -1){
 		perror("gbn_connect");
@@ -60,13 +60,12 @@ int main(int argc, char *argv[]){
 		perror("gbn_close");
 		exit(-1);
 	}
-	
+
 	/*----- Closing the file -----*/
 	if (fclose(inputFile) == EOF){
 		perror("fclose");
 		exit(-1);
 	}
-	
+
 	return(0);
 }
-
